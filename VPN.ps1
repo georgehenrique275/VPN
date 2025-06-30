@@ -1,3 +1,11 @@
+# Verifica se está em modo administrador, se não estiver, reexecuta com elevação
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -Command `"irm 'LINK_DO_SCRIPT' | iex`"" -Verb RunAs
+    exit
+}
+
+
 Write-Host "`n=== INSTALAÇÃO E CONFIGURAÇÃO DA VPN - TJPB ===" -ForegroundColor Cyan
 
 $vpnNome = "FortiClient VPN"
