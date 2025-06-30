@@ -1,4 +1,4 @@
-﻿Clear-Host
+﻿
 Write-Host "`n=== INSTALAÇÃO DO FORTICLIENT VPN ===" -ForegroundColor Cyan
 
 $vpnNome = "FortiClient VPN"
