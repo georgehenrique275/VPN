@@ -1,149 +1,115 @@
-# Verifica se está em modo administrador, se não estiver, reexecuta com elevação
-if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
-).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -Command `"irm 'LINK_DO_SCRIPT' | iex`"" -Verb RunAs
-    exit
-}
+# Script PowerShell para baixar e instalar FortiClient via GitHub RAW
+# Salve como: FortiClient_Download.ps1
 
+# Configuração da URL de download (espaços codificados como %20)
+$DownloadURL = "https://raw.githubusercontent.com/georgehenrique275/VPN/main/FortiClient%207.2.4.0972.exe"
+$OutputFile = "FortiClient_7.2.4.0972.exe"
 
-Write-Host "`n=== INSTALAÇÃO E CONFIGURAÇÃO DA VPN - TJPB ===" -ForegroundColor Cyan
+Write-Host "=== Download e Instalação do FortiClient ===" -ForegroundColor Green
+Write-Host "URL de download: $DownloadURL"
+Write-Host "Arquivo de saída: $OutputFile"
+Write-Host ""
 
-$vpnNome = "FortiClient VPN"
-$instaladorUrl = "https://links.fortinet.com/forticlient/win/vpnagent"
-$instaladorPath = "$env:TEMP\FortiClientVPN.exe"
-
-# Solicita CPF
-$cpf = Read-Host "Digite o CPF do usuário (sem pontos ou traços)"
-
-# VPN.conf com CPF
-$vpnConf = @"
-[sslvpn]
-VPNConnectionName=VPN - TJPB
-Server=tunel.tjpb.jus.br
-Port=20443
-Description=VPN - TJPB
-PromptUsername=1
-PromptPassword=1
-AutoConnect=0
-UserName=$cpf
-"@
-
-# Verifica se o host responde e detecta IPv6
-function Verificar-Conexao-VPN {
-    Write-Host "`n→ Verificando conectividade com tunel.tjpb.jus.br..." -ForegroundColor Yellow
-
-    try {
-        $ips = [System.Net.Dns]::GetHostAddresses("tunel.tjpb.jus.br")
-        $ipv6 = $ips | Where-Object { $_.AddressFamily -eq 'InterNetworkV6' }
-
-        if ($ipv6) {
-            Write-Host "⚠ O domínio resolve para IPv6: $($ipv6.IPAddressToString)" -ForegroundColor Red
-            Write-Host "→ Desabilitando IPv6 para evitar falhas na VPN..." -ForegroundColor Yellow
-            Desativar-IPv6
-        } else {
-            $ipv4 = $ips | Where-Object { $_.AddressFamily -eq 'InterNetwork' }
-            Write-Host "✓ Responde via IPv4: $($ipv4.IPAddressToString)" -ForegroundColor Green
-        }
-    } catch {
-        Write-Host "✖ Falha ao resolver o endereço: $_" -ForegroundColor Red
-    }
-}
-
-function Desativar-IPv6 {
-    try {
-        New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" `
-            -Name "DisabledComponents" -PropertyType DWord -Value 0xff -Force | Out-Null
-
-        Write-Host "✓ IPv6 desabilitado com sucesso (efetivo após reinício)." -ForegroundColor Green
-        $Global:RequerReinicio = $true
-    } catch {
-        Write-Host "✖ Erro ao desativar IPv6: $_" -ForegroundColor Red
-    }
-}
-
-function Remover-FortiClient {
-    Write-Host "`n→ Removendo FortiClient existente (se houver)..." -ForegroundColor Yellow
-
-    $keys = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+# Função para baixar arquivo do GitHub
+function Download-FromGitHub {
+    param(
+        [string]$URL,
+        [string]$OutputPath
     )
-
-    foreach ($key in $keys) {
-        Get-ItemProperty $key -ErrorAction SilentlyContinue | Where-Object {
-            $_.DisplayName -like "*FortiClient*"
-        } | ForEach-Object {
-            Write-Host "→ Desinstalando: $($_.DisplayName)" -ForegroundColor Red
-            if ($_.UninstallString) {
-                $uninstall = $_.UninstallString
-                if ($uninstall -match "msiexec") {
-                    Start-Process "msiexec.exe" -ArgumentList "/x $($_.PSChildName) /quiet /norestart" -Wait
-                } else {
-                    Start-Process "cmd.exe" -ArgumentList "/c `"$uninstall /quiet /norestart`"" -Wait
-                }
-            }
-        }
-    }
-}
-
-function Limpar-DLLs {
-    Write-Host "`n→ Limpando DLLs do FortiClient..." -ForegroundColor Yellow
-    $caminhos = @(
-        "$env:ProgramFiles\Fortinet",
-        "$env:ProgramFiles(x86)\Fortinet",
-        "$env:SystemRoot\System32",
-        "$env:SystemRoot\SysWOW64"
-    )
-
-    foreach ($pasta in $caminhos) {
-        if (Test-Path $pasta) {
-            Get-ChildItem -Path $pasta -Recurse -Include "*forticlient*.dll","*fortinet*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
-                try {
-                    Remove-Item $_.FullName -Force -ErrorAction Stop
-                    Write-Host "✓ Removido: $($_.FullName)" -ForegroundColor Green
-                } catch {
-                    Write-Host "✖ Erro ao remover $($_.FullName): $_" -ForegroundColor Red
-                }
-            }
-        }
-    }
-}
-
-function Instalar-FortiClient {
-    Write-Host "`n→ Baixando instalador do FortiClient VPN..." -ForegroundColor Cyan
+    
     try {
-        Invoke-WebRequest -Uri $instaladorUrl -OutFile $instaladorPath -UseBasicParsing
-        Write-Host "✓ Download concluído." -ForegroundColor Green
+        Write-Host "Iniciando download..." -ForegroundColor Yellow
 
-        Write-Host "→ Instalando FortiClient VPN..." -ForegroundColor Cyan
-        Start-Process -FilePath $instaladorPath -ArgumentList "/quiet /norestart" -Wait
-        Write-Host "✓ Instalação concluída." -ForegroundColor Green
-    } catch {
-        Write-Host "✖ Falha na instalação: $_" -ForegroundColor Red
+        # Usar WebClient para download
+        $WebClient = New-Object System.Net.WebClient
+        $WebClient.Headers.Add("User-Agent", "Mozilla/5.0")
+
+        $WebClient.DownloadFile($URL, $OutputPath)
+        $WebClient.Dispose()
+
+        Write-Host "✓ Download concluído!" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Host "✗ Erro no download: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
     }
 }
 
-function Configurar-VPN {
-    $destino = "C:\Program Files\Fortinet\FortiClient\vpn.conf"
-
-    if (!(Test-Path -Path (Split-Path $destino))) {
-        Write-Host "✖ FortiClient ainda não instalado: $destino" -ForegroundColor Red
-        return
+# Função para instalar FortiClient
+function Install-FortiClient {
+    param([string]$ExePath)
+    
+    if (-not (Test-Path $ExePath)) {
+        Write-Host "✗ Arquivo não encontrado: $ExePath" -ForegroundColor Red
+        return $false
     }
+    
+    $FileInfo = Get-Item $ExePath
+    $FileSizeMB = [math]::Round($FileInfo.Length / 1MB, 2)
+    Write-Host "Arquivo: $($FileInfo.Name)"
+    Write-Host "Tamanho: $FileSizeMB MB"
+    Write-Host ""
+    
+    try {
+        Write-Host "Iniciando instalação do FortiClient..." -ForegroundColor Yellow
+        Write-Host "⚠️  A instalação pode solicitar permissões de administrador" -ForegroundColor Cyan
+        
+        Write-Host "Tentando instalação silenciosa..."
+        $Process = Start-Process -FilePath $ExePath -ArgumentList "/VERYSILENT" -Wait -PassThru
 
-    $vpnConf | Set-Content -Path $destino -Encoding UTF8
-    Write-Host "`n✓ Perfil VPN configurado com sucesso para CPF: $cpf" -ForegroundColor Green
+        if ($Process.ExitCode -eq 0) {
+            Write-Host "✓ FortiClient instalado com sucesso!" -ForegroundColor Green
+            return $true
+        }
+        else {
+            Write-Host "Instalação silenciosa falhou, iniciando instalação normal..." -ForegroundColor Yellow
+            Start-Process -FilePath $ExePath
+            Write-Host "✓ Instalador do FortiClient iniciado" -ForegroundColor Green
+            return $true
+        }
+    }
+    catch {
+        Write-Host "✗ Erro na instalação: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
 }
 
-# EXECUÇÃO
-Verificar-Conexao-VPN
-Remover-FortiClient
-Limpar-DLLs
-Instalar-FortiClient
-Start-Sleep -Seconds 5
-Configurar-VPN
-
-Write-Host "`n✅ VPN FortiClient configurada com sucesso." -ForegroundColor Cyan
-if ($Global:RequerReinicio) {
-    Write-Host "⚠️ Reinicie o computador para aplicar a desativação do IPv6." -ForegroundColor Yellow
+# Função para limpeza
+function Remove-TempFile {
+    param([string]$FilePath)
+    
+    $Confirm = Read-Host "Deseja remover o arquivo de instalação? (s/n)"
+    if ($Confirm -match "^[sS]") {
+        try {
+            Remove-Item $FilePath -Force
+            Write-Host "✓ Arquivo temporário removido" -ForegroundColor Green
+        }
+        catch {
+            Write-Host "⚠️  Não foi possível remover o arquivo: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
 }
+
+# EXECUÇÃO PRINCIPAL
+Write-Host "1. Baixando FortiClient..."
+$DownloadSuccess = Download-FromGitHub -URL $DownloadURL -OutputPath $OutputFile
+
+if ($DownloadSuccess -and (Test-Path $OutputFile)) {
+    Write-Host ""
+    Write-Host "2. Instalando FortiClient..."
+    $InstallSuccess = Install-FortiClient -ExePath $OutputFile
+
+    if ($InstallSuccess) {
+        Write-Host ""
+        Write-Host "3. Limpeza..."
+        Remove-TempFile -FilePath $OutputFile
+    }
+}
+else {
+    Write-Host "✗ Falha no download. Verifique a URL ou sua conexão." -ForegroundColor Red
+}
+
+Write-Host ""
+Write-Host "=== Processo concluído ===" -ForegroundColor Green
+Read-Host "Pressione Enter para sair"
